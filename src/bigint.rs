@@ -1,25 +1,77 @@
 use super::biguint::BigUInt;
+use std::cmp::Ordering;
 use std::fmt::Debug;
-use std::ops::Add;
+use std::ops::{Add, Neg, Sub};
 
 #[derive(Clone)]
-enum BigInt {
+pub enum BigInt {
     Negative(BigUInt),
     Zero,
     Positive(BigUInt),
 }
-/*
- * Maintain invariant:
- *
- * Top bit is always 0
- *
- */
+
+impl From<BigUInt> for BigInt {
+    fn from(uint: BigUInt) -> BigInt {
+        BigInt::Positive(uint)
+    }
+}
 
 impl Add<&BigInt> for &BigInt {
     type Output = BigInt;
 
-    fn add(self: Self, b: &BigInt) -> BigInt {
-        todo!();
+    fn add(self: Self, other: &BigInt) -> BigInt {
+        match (self, other) {
+            (BigInt::Zero, BigInt::Zero) => BigInt::Zero,
+            (BigInt::Zero, _) => other.clone(),
+            (_, BigInt::Zero) => self.clone(),
+            (BigInt::Positive(left), BigInt::Positive(right)) => BigInt::Positive(left + right),
+            (BigInt::Negative(left), BigInt::Negative(right)) => BigInt::Negative(left + right),
+            (BigInt::Positive(left), BigInt::Negative(right)) => match left.cmp(right) {
+                Ordering::Equal => BigInt::Zero,
+                Ordering::Greater => BigInt::Positive((left - right).unwrap()),
+                Ordering::Less => BigInt::Negative((right - left).unwrap()),
+            },
+            (BigInt::Negative(left), BigInt::Positive(right)) => match left.cmp(right) {
+                Ordering::Equal => BigInt::Zero,
+                Ordering::Greater => BigInt::Negative((left - right).unwrap()),
+                Ordering::Less => BigInt::Positive((right - left).unwrap()),
+            },
+        }
+    }
+}
+
+impl Sub<&BigInt> for &BigInt {
+    type Output = BigInt;
+
+    fn sub(self: Self, other: &BigInt) -> BigInt {
+        match (self, other) {
+            (BigInt::Zero, BigInt::Zero) => BigInt::Zero,
+            (BigInt::Zero, _) => other.clone(),
+            (_, BigInt::Zero) => self.clone(),
+            (BigInt::Positive(left), BigInt::Positive(right)) => match left.cmp(right) {
+                Ordering::Equal => BigInt::Zero,
+                Ordering::Greater => BigInt::Positive((left - right).unwrap()),
+                Ordering::Less => BigInt::Negative((right - left).unwrap()),
+            },
+            (BigInt::Negative(left), BigInt::Negative(right)) => match left.cmp(right) {
+                Ordering::Equal => BigInt::Zero,
+                Ordering::Greater => BigInt::Negative((left - right).unwrap()),
+                Ordering::Less => BigInt::Positive((right - left).unwrap()),
+            },
+            (BigInt::Positive(left), BigInt::Negative(right)) => BigInt::Positive(left + right),
+            (BigInt::Negative(left), BigInt::Positive(right)) => BigInt::Negative(left + right),
+        }
+    }
+}
+
+impl Neg for BigInt {
+    type Output = BigInt;
+    fn neg(self) -> Self::Output {
+        match self {
+            BigInt::Zero => BigInt::Zero,
+            BigInt::Negative(abs) => BigInt::Positive(abs),
+            BigInt::Positive(abs) => BigInt::Negative(abs),
+        }
     }
 }
 
@@ -31,7 +83,7 @@ impl Debug for BigInt {
                 write!(f, "-{:?}", absolute)
             }
             BigInt::Positive(absolute) => {
-                write!(f, "{:?}", absolute)
+                write!(f, "+{:?}", absolute)
             }
         }
     }

@@ -1,23 +1,64 @@
 use std::cmp;
 use std::fmt::Debug;
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
 #[derive(Clone)]
 pub struct BigUInt {
-    parts: Vec<u64>,
+    limbs: Vec<u64>,
+}
+
+impl BigUInt {
+    fn zero() -> Self {
+        BigUInt { limbs: vec![] }
+    }
 }
 
 impl From<u64> for BigUInt {
     fn from(n: u64) -> BigUInt {
         BigUInt {
-            parts: vec![n as u64],
+            limbs: vec![n as u64],
+        }
+    }
+}
+
+pub enum ConvertError {
+    WouldOverflow,
+}
+
+impl TryFrom<&BigUInt> for u64 {
+    type Error = ConvertError;
+
+    fn try_from(n: &BigUInt) -> Result<u64, ConvertError> {
+        match n.limbs.len() {
+            0 => Ok(0),
+            1 => Ok(n.limbs[0]),
+            _ => Err(ConvertError::WouldOverflow),
         }
     }
 }
 
 impl PartialEq<BigUInt> for BigUInt {
     fn eq(&self, other: &BigUInt) -> bool {
-        self.parts == other.parts
+        self.limbs == other.limbs
+    }
+}
+
+impl Eq for BigUInt {}
+
+impl PartialOrd for BigUInt {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BigUInt {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        let ord = self.limbs.len().cmp(&other.limbs.len());
+        if ord == cmp::Ordering::Equal {
+            self.limbs.cmp(&other.limbs)
+        } else {
+            ord
+        }
     }
 }
 
@@ -25,14 +66,14 @@ impl<'a, 'b> Add<&'b BigUInt> for &'a BigUInt {
     type Output = BigUInt;
 
     fn add(self: Self, other: &BigUInt) -> BigUInt {
-        let mut new_parts = Vec::with_capacity(cmp::max(self.parts.len(), other.parts.len()) + 1);
+        let mut new_limbs = Vec::with_capacity(cmp::max(self.limbs.len(), other.limbs.len()) + 1);
         let mut carry: bool = false;
 
-        for index in 0..cmp::max(self.parts.len(), other.parts.len()) {
-            let left_part = self.parts.get(index).copied().unwrap_or(0);
-            let right_part = other.parts.get(index).copied().unwrap_or(0);
+        for index in 0..cmp::max(self.limbs.len(), other.limbs.len()) {
+            let left_limb = self.limbs.get(index).copied().unwrap_or(0);
+            let right_limb = other.limbs.get(index).copied().unwrap_or(0);
 
-            let (intermediate_val, first_overflow) = left_part.overflowing_add(right_part);
+            let (intermediate_val, first_overflow) = left_limb.overflowing_add(right_limb);
             let next_val = if carry {
                 let (final_val, second_overflow) = intermediate_val.overflowing_add(1);
                 carry = first_overflow | second_overflow;
@@ -42,14 +83,56 @@ impl<'a, 'b> Add<&'b BigUInt> for &'a BigUInt {
                 intermediate_val
             };
 
-            new_parts.push(next_val)
+            new_limbs.push(next_val)
         }
 
         if carry {
-            new_parts.push(1);
+            new_limbs.push(1);
         }
 
-        BigUInt { parts: new_parts }
+        BigUInt { limbs: new_limbs }
+    }
+}
+
+impl<'a, 'b> Sub<&'b BigUInt> for &'a BigUInt {
+    type Output = Option<BigUInt>;
+
+    fn sub(self: Self, other: &BigUInt) -> Option<BigUInt> {
+        match self.cmp(other) {
+            cmp::Ordering::Equal => Some(BigUInt::zero()),
+            cmp::Ordering::Less => None,
+            _ => {
+                let mut new_limbs =
+                    Vec::with_capacity(cmp::max(self.limbs.len(), other.limbs.len()));
+                let mut carry: bool = true;
+
+                for index in 0..cmp::max(self.limbs.len(), other.limbs.len()) {
+                    let left_limb = self.limbs.get(index).copied().unwrap_or(0);
+                    let right_limb = !other.limbs.get(index).copied().unwrap_or(0);
+
+                    let (intermediate_val, first_overflow) = left_limb.overflowing_add(right_limb);
+                    let next_val = if carry {
+                        let (final_val, second_overflow) = intermediate_val.overflowing_add(1);
+                        carry = first_overflow | second_overflow;
+                        final_val
+                    } else {
+                        carry = first_overflow;
+                        intermediate_val
+                    };
+
+                    if next_val == 0 {
+                        continue;
+                    }
+
+                    while new_limbs.len() + 1 < index {
+                        new_limbs.push(0);
+                    }
+                    new_limbs.push(next_val)
+                }
+
+                Some(BigUInt { limbs: new_limbs })
+            }
+        }
     }
 }
 
@@ -58,7 +141,7 @@ impl Debug for BigUInt {
         write!(f, "BigUInt(")?;
 
         let mut is_first = true;
-        for part in self.parts.iter().rev() {
+        for part in self.limbs.iter().rev() {
             let result = {
                 if is_first {
                     write!(f, "0x{:x}", part)
@@ -81,5 +164,5 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn it_adds
+    fn it_adds() -> () {}
 }
