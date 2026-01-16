@@ -1,7 +1,7 @@
 use super::biguint::BigUInt;
 use std::cmp::{Ord, Ordering};
 use std::fmt::Debug;
-use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sign {
@@ -186,6 +186,7 @@ impl AddAssign<&BigInt> for BigInt {
                                 a.mantissa.sub_assign_unchecked(&b.mantissa);
                             },
                             Ordering::Less => {
+                                // Optimization: Some sort of rev_mul_assign_unchecked in BigUInt
                                 a.mantissa = unsafe { b.mantissa.sub_unchecked(&a.mantissa) }
                             }
                         }
@@ -266,6 +267,39 @@ impl Neg for BigInt {
             BigInt::Zero => BigInt::Zero,
             BigInt::Nonzero(Nonzero { sign, mantissa }) => {
                 BigInt::nonzero_unchecked(sign.flipped(), mantissa)
+            }
+        }
+    }
+}
+
+impl Mul<u32> for &BigInt {
+    type Output = BigInt;
+
+    fn mul(self, rhs: u32) -> Self::Output {
+        if rhs == 0 {
+            BigInt::Zero
+        } else {
+            match self {
+                BigInt::Zero => BigInt::Zero,
+                BigInt::Nonzero(a) => BigInt::nonzero_unchecked(a.sign, &a.mantissa * rhs),
+            }
+        }
+    }
+}
+
+impl Mul<&BigInt> for &BigInt {
+    type Output = BigInt;
+
+    fn mul(self, rhs: &BigInt) -> Self::Output {
+        match (self, rhs) {
+            (BigInt::Zero, _) => BigInt::Zero,
+            (_, BigInt::Zero) => BigInt::Zero,
+            (BigInt::Nonzero(a), BigInt::Nonzero(b)) => {
+                if a.sign == b.sign {
+                    BigInt::positive_unchecked(&a.mantissa * &b.mantissa)
+                } else {
+                    BigInt::negative_unchecked(&a.mantissa * &b.mantissa)
+                }
             }
         }
     }
