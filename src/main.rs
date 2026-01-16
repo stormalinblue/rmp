@@ -1,12 +1,25 @@
 use bignum::bigint::BigInt;
 use bignum::biguint::BigUInt;
 
-fn main() {
-    let a = BigUInt::from(0x36u64);
-    let b = BigUInt::from(0x63u64);
-    let d = BigInt::from(b.clone());
+fn fibonacci(n: usize) -> BigInt {
+    if n == 0 || n == 1 {
+        return BigInt::from(1u64);
+    }
 
-    println!("{:?}", &a + &b);
-    println!("{:?}", &b - &a);
-    println!("{:?} {:?}", &d, -(d.clone()))
+    let mut a = BigInt::from(1u64);
+    let mut b = BigInt::from(1u64);
+
+    for _ in 2..=n {
+        let next_a = b.clone();
+        b += &a;
+        a = next_a;
+    }
+
+    return b;
+}
+
+fn main() {
+    for i in 0..3000 {
+        println!("{:?}", fibonacci(i));
+    }
 }
