@@ -1,4 +1,4 @@
-use std::cmp;
+use std::cmp::{self, Ord, Ordering};
 use std::fmt::Debug;
 use std::ops::{Add, Sub};
 
@@ -10,6 +10,41 @@ pub struct BigUInt {
 impl BigUInt {
     fn zero() -> Self {
         BigUInt { limbs: vec![] }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        return self.limbs.len() == 0;
+    }
+
+    pub unsafe fn sub_unchecked(&self, other: &Self) -> Self {
+        let mut new_limbs = Vec::with_capacity(cmp::max(self.limbs.len(), other.limbs.len()));
+        let mut carry: bool = true;
+
+        for index in 0..cmp::max(self.limbs.len(), other.limbs.len()) {
+            let left_limb = self.limbs.get(index).copied().unwrap_or(0);
+            let right_limb = !other.limbs.get(index).copied().unwrap_or(0);
+
+            let (intermediate_val, first_overflow) = left_limb.overflowing_add(right_limb);
+            let next_val = if carry {
+                let (final_val, second_overflow) = intermediate_val.overflowing_add(1);
+                carry = first_overflow | second_overflow;
+                final_val
+            } else {
+                carry = first_overflow;
+                intermediate_val
+            };
+
+            if next_val == 0 {
+                continue;
+            }
+
+            while new_limbs.len() + 1 < index {
+                new_limbs.push(0);
+            }
+            new_limbs.push(next_val)
+        }
+
+        BigUInt { limbs: new_limbs }
     }
 }
 
@@ -52,7 +87,7 @@ impl PartialOrd for BigUInt {
 }
 
 impl Ord for BigUInt {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         let ord = self.limbs.len().cmp(&other.limbs.len());
         if ord == cmp::Ordering::Equal {
             self.limbs.cmp(&other.limbs)
@@ -101,45 +136,13 @@ impl<'a, 'b> Sub<&'b BigUInt> for &'a BigUInt {
         match self.cmp(other) {
             cmp::Ordering::Equal => Some(BigUInt::zero()),
             cmp::Ordering::Less => None,
-            _ => {
-                let mut new_limbs =
-                    Vec::with_capacity(cmp::max(self.limbs.len(), other.limbs.len()));
-                let mut carry: bool = true;
-
-                for index in 0..cmp::max(self.limbs.len(), other.limbs.len()) {
-                    let left_limb = self.limbs.get(index).copied().unwrap_or(0);
-                    let right_limb = !other.limbs.get(index).copied().unwrap_or(0);
-
-                    let (intermediate_val, first_overflow) = left_limb.overflowing_add(right_limb);
-                    let next_val = if carry {
-                        let (final_val, second_overflow) = intermediate_val.overflowing_add(1);
-                        carry = first_overflow | second_overflow;
-                        final_val
-                    } else {
-                        carry = first_overflow;
-                        intermediate_val
-                    };
-
-                    if next_val == 0 {
-                        continue;
-                    }
-
-                    while new_limbs.len() + 1 < index {
-                        new_limbs.push(0);
-                    }
-                    new_limbs.push(next_val)
-                }
-
-                Some(BigUInt { limbs: new_limbs })
-            }
+            _ => Some(unsafe { self.sub_unchecked(other) }),
         }
     }
 }
 
 impl Debug for BigUInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "BigUInt(")?;
-
         let mut is_first = true;
         for part in self.limbs.iter().rev() {
             let result = {
@@ -154,7 +157,6 @@ impl Debug for BigUInt {
             }
             is_first = false;
         }
-        write!(f, ")")?;
         Ok(())
     }
 }

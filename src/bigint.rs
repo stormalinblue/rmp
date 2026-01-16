@@ -1,18 +1,83 @@
 use super::biguint::BigUInt;
-use std::cmp::Ordering;
+use std::cmp::{Ord, Ordering};
 use std::fmt::Debug;
 use std::ops::{Add, Neg, Sub};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sign {
+    Positive,
+    Negative,
+}
+
+impl Sign {
+    fn flipped(&self) -> Sign {
+        match self {
+            Sign::Positive => Self::Negative,
+            Sign::Negative => Self::Positive,
+        }
+    }
+
+    fn flip(&mut self) {
+        *self = self.flipped()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Nonzero {
+    sign: Sign,
+    mantissa: BigUInt,
+}
+
+impl PartialOrd for &Nonzero {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for &Nonzero {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self.sign, other.sign) {
+            (Sign::Positive, Sign::Negative) => Ordering::Greater,
+            (Sign::Negative, Sign::Positive) => Ordering::Less,
+            (Sign::Positive, Sign::Positive) => self.mantissa.cmp(&other.mantissa),
+            (Sign::Negative, Sign::Negative) => other.mantissa.cmp(&self.mantissa),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum BigInt {
-    Negative(BigUInt),
     Zero,
-    Positive(BigUInt),
+    Nonzero(Nonzero),
+}
+
+impl BigInt {
+    fn nonzero_unchecked(sign: Sign, mantissa: BigUInt) -> Self {
+        BigInt::Nonzero(Nonzero { sign, mantissa })
+    }
+
+    fn positive_unchecked(mantissa: BigUInt) -> Self {
+        BigInt::Nonzero(Nonzero {
+            sign: Sign::Positive,
+            mantissa,
+        })
+    }
+
+    fn negative_unchecked(mantissa: BigUInt) -> Self {
+        BigInt::Nonzero(Nonzero {
+            sign: Sign::Negative,
+            mantissa,
+        })
+    }
 }
 
 impl From<BigUInt> for BigInt {
     fn from(uint: BigUInt) -> BigInt {
-        BigInt::Positive(uint)
+        if uint.is_zero() {
+            BigInt::Zero
+        } else {
+            BigInt::nonzero_unchecked(Sign::Positive, uint)
+        }
     }
 }
 
@@ -24,18 +89,30 @@ impl Add<&BigInt> for &BigInt {
             (BigInt::Zero, BigInt::Zero) => BigInt::Zero,
             (BigInt::Zero, _) => other.clone(),
             (_, BigInt::Zero) => self.clone(),
-            (BigInt::Positive(left), BigInt::Positive(right)) => BigInt::Positive(left + right),
-            (BigInt::Negative(left), BigInt::Negative(right)) => BigInt::Negative(left + right),
-            (BigInt::Positive(left), BigInt::Negative(right)) => match left.cmp(right) {
-                Ordering::Equal => BigInt::Zero,
-                Ordering::Greater => BigInt::Positive((left - right).unwrap()),
-                Ordering::Less => BigInt::Negative((right - left).unwrap()),
-            },
-            (BigInt::Negative(left), BigInt::Positive(right)) => match left.cmp(right) {
-                Ordering::Equal => BigInt::Zero,
-                Ordering::Greater => BigInt::Negative((left - right).unwrap()),
-                Ordering::Less => BigInt::Positive((right - left).unwrap()),
-            },
+            (
+                BigInt::Nonzero(Nonzero {
+                    sign: sign_a,
+                    mantissa: man_a,
+                }),
+                BigInt::Nonzero(Nonzero {
+                    sign: sign_b,
+                    mantissa: man_b,
+                }),
+            ) => {
+                if sign_a == sign_b {
+                    return BigInt::nonzero_unchecked(*sign_a, man_a + man_b);
+                } else {
+                    match man_a.cmp(man_b) {
+                        Ordering::Equal => BigInt::Zero,
+                        Ordering::Greater => {
+                            BigInt::positive_unchecked(unsafe { man_a.sub_unchecked(man_b) })
+                        }
+                        Ordering::Less => {
+                            BigInt::negative_unchecked(unsafe { man_b.sub_unchecked(man_a) })
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -48,18 +125,30 @@ impl Sub<&BigInt> for &BigInt {
             (BigInt::Zero, BigInt::Zero) => BigInt::Zero,
             (BigInt::Zero, _) => other.clone(),
             (_, BigInt::Zero) => self.clone(),
-            (BigInt::Positive(left), BigInt::Positive(right)) => match left.cmp(right) {
-                Ordering::Equal => BigInt::Zero,
-                Ordering::Greater => BigInt::Positive((left - right).unwrap()),
-                Ordering::Less => BigInt::Negative((right - left).unwrap()),
-            },
-            (BigInt::Negative(left), BigInt::Negative(right)) => match left.cmp(right) {
-                Ordering::Equal => BigInt::Zero,
-                Ordering::Greater => BigInt::Negative((left - right).unwrap()),
-                Ordering::Less => BigInt::Positive((right - left).unwrap()),
-            },
-            (BigInt::Positive(left), BigInt::Negative(right)) => BigInt::Positive(left + right),
-            (BigInt::Negative(left), BigInt::Positive(right)) => BigInt::Negative(left + right),
+            (
+                BigInt::Nonzero(Nonzero {
+                    sign: sign_a,
+                    mantissa: man_a,
+                }),
+                BigInt::Nonzero(Nonzero {
+                    sign: sign_b,
+                    mantissa: man_b,
+                }),
+            ) => {
+                if sign_a == sign_b {
+                    return BigInt::nonzero_unchecked(*sign_a, man_a + man_b);
+                } else {
+                    match man_a.cmp(man_b) {
+                        Ordering::Equal => BigInt::Zero,
+                        Ordering::Greater => {
+                            BigInt::negative_unchecked(unsafe { man_a.sub_unchecked(man_b) })
+                        }
+                        Ordering::Less => {
+                            BigInt::positive_unchecked(unsafe { man_b.sub_unchecked(man_a) })
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -69,8 +158,9 @@ impl Neg for BigInt {
     fn neg(self) -> Self::Output {
         match self {
             BigInt::Zero => BigInt::Zero,
-            BigInt::Negative(abs) => BigInt::Positive(abs),
-            BigInt::Positive(abs) => BigInt::Negative(abs),
+            BigInt::Nonzero(Nonzero { sign, mantissa }) => {
+                BigInt::nonzero_unchecked(sign.flipped(), mantissa)
+            }
         }
     }
 }
@@ -79,12 +169,14 @@ impl Debug for BigInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BigInt::Zero => write!(f, "0"),
-            BigInt::Negative(absolute) => {
-                write!(f, "-{:?}", absolute)
-            }
-            BigInt::Positive(absolute) => {
-                write!(f, "+{:?}", absolute)
-            }
+            BigInt::Nonzero(Nonzero { sign, mantissa }) => match sign {
+                Sign::Positive => {
+                    write!(f, "-{:?}", mantissa)
+                }
+                Sign::Negative => {
+                    write!(f, "+{:?}", mantissa)
+                }
+            },
         }
     }
 }
