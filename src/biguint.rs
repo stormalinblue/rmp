@@ -17,34 +17,82 @@ impl BigUInt {
     }
 
     pub unsafe fn sub_unchecked(&self, other: &Self) -> Self {
-        let mut new_limbs = Vec::with_capacity(cmp::max(self.limbs.len(), other.limbs.len()));
-        let mut carry: bool = true;
+        let (left_limbs, right_limbs) = match self.limbs.len().cmp(&other.limbs.len()) {
+            Ordering::Less => (&other.limbs, &self.limbs),
+            _ => (&self.limbs, &other.limbs),
+        };
+        // println!("self {:?} other {:?}", self, other);
 
-        for index in 0..cmp::max(self.limbs.len(), other.limbs.len()) {
-            let left_limb = self.limbs.get(index).copied().unwrap_or(0);
-            let right_limb = !other.limbs.get(index).copied().unwrap_or(0);
+        let mut new_limbs = Vec::with_capacity(left_limbs.len());
+        let mut nonzero_size: usize = 0;
 
-            let (intermediate_val, first_overflow) = left_limb.overflowing_add(right_limb);
-            let next_val = if carry {
-                let (final_val, second_overflow) = intermediate_val.overflowing_add(1);
-                carry = first_overflow | second_overflow;
-                final_val
-            } else {
-                carry = first_overflow;
-                intermediate_val
-            };
+        let mut carry: u64 = 1;
+        for index in 0..right_limbs.len() {
+            let (intermediate_val, first_overflow) =
+                left_limbs[index].overflowing_add(!right_limbs[index]);
+            let (final_val, second_overflow) = intermediate_val.overflowing_add(carry);
+            // println!(
+            //     "carry {} inter {} over {} final {} over {}",
+            //     carry, intermediate_val, first_overflow, final_val, second_overflow
+            // );
 
-            if next_val == 0 {
-                continue;
+            carry = (first_overflow as u64) + (second_overflow as u64);
+
+            new_limbs.push(final_val);
+            if final_val != 0 {
+                nonzero_size = index + 1;
             }
+        }
 
-            while new_limbs.len() + 1 < index {
-                new_limbs.push(0);
+        for index in right_limbs.len()..left_limbs.len() {
+            let (intermediate_val, first_overflow) = left_limbs[index].overflowing_add(!0u64);
+            let (final_val, second_overflow) = intermediate_val.overflowing_add(carry);
+            carry = (first_overflow as u64) + (second_overflow as u64);
+
+            new_limbs.push(final_val);
+            if final_val != 0 {
+                nonzero_size = index + 1;
             }
-            new_limbs.push(next_val)
+        }
+
+        unsafe {
+            new_limbs.set_len(nonzero_size);
         }
 
         BigUInt { limbs: new_limbs }
+    }
+
+    pub unsafe fn sub_assign_unchecked(&mut self, other: &Self) {
+        let mut carry: u64 = 1;
+        let mut nonzero_size: usize = 0;
+
+        for index in 0..other.limbs.len() {
+            let (intermediate_val, first_overflow) =
+                self.limbs[index].overflowing_add(!other.limbs[index]);
+            let (final_val, second_overflow) = intermediate_val.overflowing_add(carry);
+
+            carry = (first_overflow as u64) + (second_overflow as u64);
+            self.limbs[index] = final_val;
+            if final_val != 0 {
+                nonzero_size = index + 1;
+            }
+        }
+
+        for index in other.limbs.len()..self.limbs.len() {
+            let (intermediate_val, first_overflow) = self.limbs[index].overflowing_add(!0u64);
+            let (final_val, second_overflow) = intermediate_val.overflowing_add(carry);
+
+            carry = (first_overflow as u64) + (second_overflow as u64);
+            self.limbs[index] = final_val;
+
+            if final_val != 0 {
+                nonzero_size = index + 1;
+            }
+        }
+
+        unsafe {
+            self.limbs.set_len(nonzero_size);
+        }
     }
 }
 
@@ -58,9 +106,7 @@ impl From<u32> for BigUInt {
 
 impl From<u64> for BigUInt {
     fn from(n: u64) -> BigUInt {
-        BigUInt {
-            limbs: vec![n as u64],
-        }
+        BigUInt { limbs: vec![n] }
     }
 }
 
@@ -98,7 +144,13 @@ impl Ord for BigUInt {
     fn cmp(&self, other: &Self) -> Ordering {
         let ord = self.limbs.len().cmp(&other.limbs.len());
         if ord == cmp::Ordering::Equal {
-            self.limbs.cmp(&other.limbs)
+            for (left, right) in self.limbs.iter().rev().zip(other.limbs.iter().rev()) {
+                match left.cmp(right) {
+                    Ordering::Equal => {}
+                    ord => return ord,
+                }
+            }
+            return Ordering::Equal;
         } else {
             ord
         }
@@ -119,8 +171,8 @@ impl Add<&BigUInt> for &BigUInt {
         };
 
         for index in 0..right_limbs.len() {
-            let left_limb = self.limbs[index];
-            let right_limb = other.limbs[index];
+            let left_limb = left_limbs[index];
+            let right_limb = right_limbs[index];
 
             let (intermediate_val, first_carry) = left_limb.overflowing_add(right_limb);
             let (final_val, second_carry) = intermediate_val.overflowing_add(carry);
@@ -205,7 +257,7 @@ impl Debug for BigUInt {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -227,6 +279,38 @@ pub mod tests {
 
             assert_eq!(a_add, a_add_eq, "a not equal");
             assert_eq!(b_add, b_add_eq, "b not equal");
+        }
+    }
+
+    #[test]
+    fn sub_reverses_fib_step() -> () {
+        let mut a_add_eq = BigUInt::from(1u64);
+        let mut b_add_eq = BigUInt::from(1u64);
+
+        for _ in 0..3000 {
+            let prev_a = a_add_eq.clone();
+            let prev_b = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            assert_eq!(prev_a, (&b_add_eq - &prev_b).unwrap(), "a not equal");
+            a_add_eq = prev_b;
+        }
+    }
+
+    #[test]
+    fn sub_assign_reverses_fib_step() -> () {
+        let mut a_add_eq = BigUInt::from(1u64);
+        let mut b_add_eq = BigUInt::from(1u64);
+
+        for _ in 0..3000 {
+            let prev_a = a_add_eq.clone();
+            let prev_b = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            let mut reversing_b = b_add_eq.clone();
+            unsafe {
+                reversing_b.sub_assign_unchecked(&prev_b);
+            }
+            assert_eq!(prev_a, reversing_b, "a not equal");
+            a_add_eq = prev_b;
         }
     }
 }

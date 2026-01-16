@@ -1,7 +1,7 @@
 use super::biguint::BigUInt;
 use std::cmp::{Ord, Ordering};
 use std::fmt::Debug;
-use std::ops::{Add, AddAssign, Neg, Sub};
+use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sign {
@@ -182,9 +182,9 @@ impl AddAssign<&BigInt> for BigInt {
                     } else {
                         match a.mantissa.cmp(&b.mantissa) {
                             Ordering::Equal => *self = BigInt::Zero,
-                            Ordering::Greater => {
-                                a.mantissa = unsafe { a.mantissa.sub_unchecked(&b.mantissa) }
-                            }
+                            Ordering::Greater => unsafe {
+                                a.mantissa.sub_assign_unchecked(&b.mantissa);
+                            },
                             Ordering::Less => {
                                 a.mantissa = unsafe { b.mantissa.sub_unchecked(&a.mantissa) }
                             }
@@ -215,19 +215,46 @@ impl Sub<&BigInt> for &BigInt {
                 }),
             ) => {
                 if sign_a == sign_b {
-                    return BigInt::nonzero_unchecked(*sign_a, man_a + man_b);
-                } else {
                     match man_a.cmp(man_b) {
                         Ordering::Equal => BigInt::Zero,
-                        Ordering::Greater => {
-                            BigInt::negative_unchecked(unsafe { man_a.sub_unchecked(man_b) })
-                        }
-                        Ordering::Less => {
-                            BigInt::positive_unchecked(unsafe { man_b.sub_unchecked(man_a) })
+                        Ordering::Greater => BigInt::nonzero_unchecked(*sign_a, unsafe {
+                            man_a.sub_unchecked(man_b)
+                        }),
+                        Ordering::Less => BigInt::nonzero_unchecked(sign_a.flipped(), unsafe {
+                            man_b.sub_unchecked(man_a)
+                        }),
+                    }
+                } else {
+                    return BigInt::nonzero_unchecked(*sign_a, man_a + man_b);
+                }
+            }
+        }
+    }
+}
+
+impl SubAssign<&BigInt> for BigInt {
+    fn sub_assign(&mut self, other: &BigInt) {
+        match self {
+            BigInt::Zero => *self = other.clone(),
+            BigInt::Nonzero(a) => match other {
+                BigInt::Zero => {}
+                BigInt::Nonzero(b) => {
+                    if a.sign != b.sign {
+                        a.mantissa += &b.mantissa;
+                    } else {
+                        match a.mantissa.cmp(&b.mantissa) {
+                            Ordering::Equal => *self = BigInt::Zero,
+                            Ordering::Greater => unsafe {
+                                a.mantissa.sub_assign_unchecked(&b.mantissa);
+                            },
+                            Ordering::Less => {
+                                a.sign.flip();
+                                a.mantissa = unsafe { b.mantissa.sub_unchecked(&a.mantissa) }
+                            }
                         }
                     }
                 }
-            }
+            },
         }
     }
 }
@@ -261,7 +288,7 @@ impl Debug for BigInt {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -305,6 +332,66 @@ pub mod tests {
 
             assert_eq!(a_add, a_add_eq, "a not equal");
             assert_eq!(b_add, b_add_eq, "b not equal");
+        }
+    }
+
+    #[test]
+    fn sub_reverses_fib_step() -> () {
+        let mut a_add_eq = BigInt::from(1u64);
+        let mut b_add_eq = BigInt::from(1u64);
+
+        for _ in 0..3000 {
+            let prev_a = a_add_eq.clone();
+            let prev_b = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            assert_eq!(prev_a, (&b_add_eq - &prev_b), "a not equal");
+            a_add_eq = prev_b;
+        }
+    }
+
+    #[test]
+    fn sub_reverses_neg_fib_step() -> () {
+        let mut a_add_eq = BigInt::from(-1);
+        let mut b_add_eq = BigInt::from(-1);
+
+        for _ in 0..3000 {
+            let prev_a = a_add_eq.clone();
+            let prev_b = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            assert_eq!(prev_a, (&b_add_eq - &prev_b), "a not equal");
+            a_add_eq = prev_b;
+        }
+    }
+
+    #[test]
+    fn sub_assign_reverses_fib_step() -> () {
+        let mut a_add_eq = BigInt::from(1u64);
+        let mut b_add_eq = BigInt::from(1u64);
+
+        for _ in 0..3000 {
+            let prev_a = a_add_eq.clone();
+            let prev_b = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            let mut reversing_b = b_add_eq.clone();
+            reversing_b -= &prev_b;
+            assert_eq!(prev_a, reversing_b, "a not equal");
+            a_add_eq = prev_b;
+        }
+    }
+
+    #[test]
+    fn sub_assign_reverses_neg_fib_step() -> () {
+        let mut a_add_eq = BigInt::from(-1);
+        let mut b_add_eq = BigInt::from(-1);
+
+        for _ in 0..3000 {
+            let prev_a = a_add_eq.clone();
+            let prev_b = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            let mut reversing_b = b_add_eq.clone();
+            reversing_b -= &prev_b;
+            assert_eq!(prev_a, reversing_b, "a not equal");
+            a_add_eq = prev_b;
         }
     }
 }
