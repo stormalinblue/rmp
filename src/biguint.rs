@@ -1,6 +1,6 @@
 use std::cmp::{self, Ord, Ordering};
 use std::fmt::Debug;
-use std::ops::{Add, Sub};
+use std::ops::{Add, AddAssign, Sub};
 
 #[derive(Clone)]
 pub struct BigUInt {
@@ -97,35 +97,70 @@ impl Ord for BigUInt {
     }
 }
 
-impl<'a, 'b> Add<&'b BigUInt> for &'a BigUInt {
+impl Add<&BigUInt> for &BigUInt {
     type Output = BigUInt;
 
     fn add(self: Self, other: &BigUInt) -> BigUInt {
-        let mut new_limbs = Vec::with_capacity(cmp::max(self.limbs.len(), other.limbs.len()) + 1);
-        let mut carry: bool = false;
+        let max_limbs = cmp::max(self.limbs.len(), other.limbs.len());
+        let mut new_limbs = Vec::with_capacity(max_limbs + 1);
+        let mut carry: u64 = 0;
 
-        for index in 0..cmp::max(self.limbs.len(), other.limbs.len()) {
-            let left_limb = self.limbs.get(index).copied().unwrap_or(0);
-            let right_limb = other.limbs.get(index).copied().unwrap_or(0);
+        let (left_limbs, right_limbs) = match self.limbs.len().cmp(&other.limbs.len()) {
+            Ordering::Less => (&other.limbs, &self.limbs),
+            _ => (&self.limbs, &other.limbs),
+        };
 
-            let (intermediate_val, first_overflow) = left_limb.overflowing_add(right_limb);
-            let next_val = if carry {
-                let (final_val, second_overflow) = intermediate_val.overflowing_add(1);
-                carry = first_overflow | second_overflow;
-                final_val
-            } else {
-                carry = first_overflow;
-                intermediate_val
-            };
+        for index in 0..right_limbs.len() {
+            let left_limb = self.limbs[index];
+            let right_limb = other.limbs[index];
 
-            new_limbs.push(next_val)
+            let (intermediate_val, first_carry) = left_limb.overflowing_add(right_limb);
+            let (final_val, second_carry) = intermediate_val.overflowing_add(carry);
+            carry = (first_carry as u64) | (second_carry as u64);
+
+            new_limbs.push(final_val);
         }
 
-        if carry {
+        for index in right_limbs.len()..max_limbs {
+            let (next_val, overflow) = left_limbs[index].overflowing_add(carry);
+            carry = overflow as u64;
+
+            new_limbs.push(next_val);
+        }
+
+        if carry > 0 {
             new_limbs.push(1);
         }
-
         BigUInt { limbs: new_limbs }
+    }
+}
+
+impl AddAssign<&BigUInt> for BigUInt {
+    fn add_assign(&mut self, other: &BigUInt) {
+        let max_limbs = cmp::max(self.limbs.len(), other.limbs.len());
+        let target_capacity = max_limbs + 1;
+        self.limbs.reserve_exact(target_capacity - self.limbs.len());
+        self.limbs.resize(max_limbs, 0);
+        let mut carry: u64 = 0;
+
+        for index in 0..other.limbs.len() {
+            let left_limb = self.limbs[index];
+            let right_limb = other.limbs[index];
+
+            let (intermediate_val, first_carry) = left_limb.overflowing_add(right_limb);
+            let (final_val, second_carry) = intermediate_val.overflowing_add(carry);
+            self.limbs[index] = final_val;
+
+            carry = (first_carry as u64) + (second_carry as u64);
+        }
+
+        if carry > 0 {
+            if other.limbs.len() < max_limbs {
+                self.limbs[other.limbs.len()] += 1
+            } else {
+                self.limbs.push(1)
+            }
+        }
     }
 }
 
@@ -149,7 +184,7 @@ impl Debug for BigUInt {
                 if is_first {
                     write!(f, "0x{:x}", part)
                 } else {
-                    write!(f, ".{:016x}", part)
+                    write!(f, "_{:016x}", part)
                 }
             };
             if result.is_err() {
@@ -166,5 +201,24 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn it_adds() -> () {}
+    fn add_eq_corresponds_to_add_fib() -> () {
+        let mut a_add = BigUInt::from(1u64);
+        let mut b_add = BigUInt::from(1u64);
+
+        let mut a_add_eq = BigUInt::from(1u64);
+        let mut b_add_eq = BigUInt::from(1u64);
+
+        for _ in 0..3000 {
+            let next_a_add = b_add.clone();
+            b_add = b_add.add(&a_add);
+            a_add = next_a_add;
+
+            let next_a_add_eq = b_add_eq.clone();
+            b_add_eq.add_assign(&a_add_eq);
+            a_add_eq = next_a_add_eq;
+
+            assert_eq!(a_add, a_add_eq, "a not equal");
+            assert_eq!(b_add, b_add_eq, "b not equal");
+        }
+    }
 }
