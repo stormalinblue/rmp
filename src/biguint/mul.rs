@@ -71,19 +71,10 @@ impl Mul<&BigUInt> for &BigUInt {
             let bones = limb_to_bones_u32(*limb);
 
             // Optimization: Limb Shift and add
-            let lower_bone_result: BigUInt = {
-                let mut bone_result = self * bones.lower;
-                bone_result <<= (64 * lshift_limbs) as u64;
-                bone_result
-            };
-
-            let upper_bone_result: BigUInt = {
-                let mut bone_result = self * bones.upper;
-                bone_result <<= (64 * lshift_limbs) as u64;
-                bone_result
-            };
-            lower_result += &lower_bone_result;
-            upper_result += &upper_bone_result;
+            let lower_bone_result = self * bones.lower;
+            let upper_bone_result = self * bones.upper;
+            lower_result.limb_lshift_add_assign(lshift_limbs, &lower_bone_result);
+            upper_result.limb_lshift_add_assign(lshift_limbs, &upper_bone_result);
         }
 
         upper_result <<= 32;

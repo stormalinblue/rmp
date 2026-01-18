@@ -3,10 +3,37 @@ use std::cmp::{self, Ordering};
 use std::ops::{Add, AddAssign, Sub};
 
 impl BigUInt {
-    pub(crate) unsafe fn sub_unchecked(&self, other: &Self) -> Self {
-        let (left_limbs, right_limbs) = match self.limbs.len().cmp(&other.limbs.len()) {
-            Ordering::Less => (&other.limbs, &self.limbs),
-            _ => (&self.limbs, &other.limbs),
+    pub(super) fn limb_lshift_add_assign(&mut self, lshift_limbs: usize, rhs: &Self) {
+        let max_limbs = cmp::max(self.limbs.len(), rhs.limbs.len() + lshift_limbs);
+        let target_capacity = max_limbs + 1;
+        self.limbs.reserve(target_capacity - self.limbs.len());
+        self.limbs.resize(max_limbs, 0);
+        let mut carry: u64 = 0;
+
+        for index in 0..rhs.limbs.len() {
+            let left_limb = self.limbs[lshift_limbs + index];
+            let right_limb = rhs.limbs[index];
+
+            let (intermediate_val, first_carry) = left_limb.overflowing_add(right_limb);
+            let (final_val, second_carry) = intermediate_val.overflowing_add(carry);
+            self.limbs[lshift_limbs + index] = final_val;
+
+            carry = (first_carry as u64) + (second_carry as u64);
+        }
+
+        if carry > 0 {
+            if (rhs.limbs.len() + lshift_limbs) < max_limbs {
+                self.limbs[rhs.limbs.len() + lshift_limbs] += 1
+            } else {
+                self.limbs.push(1)
+            }
+        }
+    }
+
+    pub(crate) unsafe fn sub_unchecked(&self, rhs: &Self) -> Self {
+        let (left_limbs, right_limbs) = match self.limbs.len().cmp(&rhs.limbs.len()) {
+            Ordering::Less => (&rhs.limbs, &self.limbs),
+            _ => (&self.limbs, &rhs.limbs),
         };
 
         let mut new_limbs = Vec::with_capacity(left_limbs.len());
@@ -44,13 +71,13 @@ impl BigUInt {
         BigUInt { limbs: new_limbs }
     }
 
-    pub(crate) unsafe fn sub_assign_unchecked(&mut self, other: &Self) {
+    pub(crate) unsafe fn sub_assign_unchecked(&mut self, rhs: &Self) {
         let mut carry: u64 = 1;
         let mut nonzero_size: usize = 0;
 
-        for index in 0..other.limbs.len() {
+        for index in 0..rhs.limbs.len() {
             let (intermediate_val, first_overflow) =
-                self.limbs[index].overflowing_add(!other.limbs[index]);
+                self.limbs[index].overflowing_add(!rhs.limbs[index]);
             let (final_val, second_overflow) = intermediate_val.overflowing_add(carry);
 
             carry = (first_overflow as u64) + (second_overflow as u64);
@@ -60,7 +87,7 @@ impl BigUInt {
             }
         }
 
-        for index in other.limbs.len()..self.limbs.len() {
+        for index in rhs.limbs.len()..self.limbs.len() {
             let (intermediate_val, first_overflow) = self.limbs[index].overflowing_add(!0u64);
             let (final_val, second_overflow) = intermediate_val.overflowing_add(carry);
 
@@ -81,14 +108,14 @@ impl BigUInt {
 impl Add<&BigUInt> for &BigUInt {
     type Output = BigUInt;
 
-    fn add(self: Self, other: &BigUInt) -> BigUInt {
-        let max_limbs = cmp::max(self.limbs.len(), other.limbs.len());
+    fn add(self: Self, rhs: &BigUInt) -> BigUInt {
+        let max_limbs = cmp::max(self.limbs.len(), rhs.limbs.len());
         let mut new_limbs = Vec::with_capacity(max_limbs + 1);
         let mut carry: u64 = 0;
 
-        let (left_limbs, right_limbs) = match self.limbs.len().cmp(&other.limbs.len()) {
-            Ordering::Less => (&other.limbs, &self.limbs),
-            _ => (&self.limbs, &other.limbs),
+        let (left_limbs, right_limbs) = match self.limbs.len().cmp(&rhs.limbs.len()) {
+            Ordering::Less => (&rhs.limbs, &self.limbs),
+            _ => (&self.limbs, &rhs.limbs),
         };
 
         for index in 0..right_limbs.len() {
@@ -117,16 +144,16 @@ impl Add<&BigUInt> for &BigUInt {
 }
 
 impl AddAssign<&BigUInt> for BigUInt {
-    fn add_assign(&mut self, other: &BigUInt) {
-        let max_limbs = cmp::max(self.limbs.len(), other.limbs.len());
+    fn add_assign(&mut self, rhs: &BigUInt) {
+        let max_limbs = cmp::max(self.limbs.len(), rhs.limbs.len());
         let target_capacity = max_limbs + 1;
         self.limbs.reserve(target_capacity - self.limbs.len());
         self.limbs.resize(max_limbs, 0);
         let mut carry: u64 = 0;
 
-        for index in 0..other.limbs.len() {
+        for index in 0..rhs.limbs.len() {
             let left_limb = self.limbs[index];
-            let right_limb = other.limbs[index];
+            let right_limb = rhs.limbs[index];
 
             let (intermediate_val, first_carry) = left_limb.overflowing_add(right_limb);
             let (final_val, second_carry) = intermediate_val.overflowing_add(carry);
@@ -136,8 +163,8 @@ impl AddAssign<&BigUInt> for BigUInt {
         }
 
         if carry > 0 {
-            if other.limbs.len() < max_limbs {
-                self.limbs[other.limbs.len()] += 1
+            if rhs.limbs.len() < max_limbs {
+                self.limbs[rhs.limbs.len()] += 1
             } else {
                 self.limbs.push(1)
             }
