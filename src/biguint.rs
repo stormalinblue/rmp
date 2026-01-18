@@ -9,6 +9,34 @@ pub struct BigUInt {
 
 const LIMB_SIZE_BITS: u64 = 8 * (std::mem::size_of::<u64>() as u64);
 
+#[derive(Debug)]
+struct Bones {
+    upper: u64,
+    lower: u64,
+}
+
+fn limb_to_bones(a: u64) -> Bones {
+    const LOWER_BONE_MASK: u64 = (1u64 << 32) - 1;
+    Bones {
+        upper: a >> 32,
+        lower: a & LOWER_BONE_MASK,
+    }
+}
+
+#[derive(Debug)]
+struct BonesU32 {
+    upper: u32,
+    lower: u32,
+}
+
+fn limb_to_bones_u32(a: u64) -> BonesU32 {
+    const LOWER_BONE_MASK: u64 = (1u64 << 32) - 1;
+    BonesU32 {
+        upper: (a >> 32) as u32,
+        lower: (a & LOWER_BONE_MASK) as u32,
+    }
+}
+
 impl BigUInt {
     fn zero() -> Self {
         BigUInt { limbs: vec![] }
@@ -245,11 +273,9 @@ impl<'a, 'b> Sub<&'b BigUInt> for &'a BigUInt {
 
 impl ShlAssign<u64> for BigUInt {
     fn shl_assign(&mut self, rhs: u64) {
-        if rhs == 0 {
+        if rhs == 0 || self.is_zero() {
             return;
         }
-
-        // println!("rhs {}", rhs);
 
         let old_num_bits = self.num_bits();
         let new_num_bits = old_num_bits + rhs;
@@ -262,11 +288,18 @@ impl ShlAssign<u64> for BigUInt {
         let shift_limbs = (rhs / LIMB_SIZE_BITS) as usize;
         let shift_bits = rhs % LIMB_SIZE_BITS;
 
-        // println!("shift limbs {} bits {}", shift_limbs, shift_bits);
-
         // Optimization: Use ptr::copy
         self.limbs.copy_within(0..old_num_limbs, shift_limbs);
         self.limbs[0..cmp::min(old_num_limbs, shift_limbs)].fill(0);
+
+        /*
+         * Optimize for the internally common case of shifting by
+         * a multiple of limb size (perhaps should provide
+         * a dedicated routine).
+         */
+        if shift_bits == 0 {
+            return;
+        }
 
         // Optimization: SIMD
         for index in (shift_limbs..(shift_limbs + old_num_limbs)).rev() {
@@ -296,33 +329,24 @@ impl Mul<u32> for &BigUInt {
         let tot_limbs = ((tot_bits + LIMB_SIZE_BITS - 1) / LIMB_SIZE_BITS) as usize;
 
         let mut new_limbs = vec![0u64; tot_limbs];
-        // println!("num new limbs {}", tot_limbs);
 
         let rhs_limb = rhs as u64;
-
-        const LOWER_BONE_MASK: u64 = (1u64 << 32) - 1;
 
         // carry is at most 2 ** 32
         let mut carry: u64 = 0;
         for (index, limb) in self.limbs.iter().enumerate() {
-            // println!("limb {} {:x}", limb, LOWER_BONE_MASK);
-            let lower_bone = limb & LOWER_BONE_MASK;
-            let upper_bone = limb >> 32;
-
-            // println!("bones {} {}", lower_bone, upper_bone);
+            let bones = limb_to_bones(*limb);
 
             // lower_result is at most (2 ** 64) - 2 * (2 ** 32) + 1
-            let lower_result = lower_bone * rhs_limb;
-            let upper_result = upper_bone * rhs_limb;
-
-            // println!("results {} {}", lower_bone, upper_bone);
+            let lower_result = bones.lower * rhs_limb;
+            let upper_result = bones.upper * rhs_limb;
 
             // upper_in_current is at most 2 ** 32 - 1
-            let upper_in_current = upper_result & LOWER_BONE_MASK;
             // upper_in_next is at most 2 ** 32 - 1
-            let upper_in_next = upper_result >> 32;
-
-            // println!("upper split {} {}", upper_in_current, upper_in_next);
+            let Bones {
+                upper: upper_in_next,
+                lower: upper_in_current,
+            } = limb_to_bones(upper_result);
 
             // lower_result + carry is at most 2 ** 64 - 2 ** 32 + 1
             // upper_in_current << 32 is at most 2 ** 64 - 2 ** 32
@@ -348,12 +372,45 @@ impl Mul<&BigUInt> for &BigUInt {
     type Output = BigUInt;
 
     fn mul(self, rhs: &BigUInt) -> Self::Output {
-        todo!();
+        if self.is_zero() || rhs.is_zero() {
+            return BigUInt::zero();
+        }
+
+        let mut lower_result = BigUInt::zero();
+        let mut upper_result = BigUInt::zero();
+
+        for (lshift_limbs, limb) in rhs.limbs.iter().enumerate().rev() {
+            let bones = limb_to_bones_u32(*limb);
+
+            // Optimization: Limb Shift and add
+            let lower_bone_result: BigUInt = {
+                let mut bone_result = self * bones.lower;
+                bone_result <<= (64 * lshift_limbs) as u64;
+                bone_result
+            };
+
+            let upper_bone_result: BigUInt = {
+                let mut bone_result = self * bones.upper;
+                bone_result <<= (64 * lshift_limbs) as u64;
+                bone_result
+            };
+            lower_result += &lower_bone_result;
+            upper_result += &upper_bone_result;
+        }
+
+        upper_result <<= 32;
+        lower_result += &upper_result;
+        lower_result
     }
 }
 
 impl Debug for BigUInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_zero() {
+            write!(f, "0x0")?;
+            return Ok(());
+        }
+
         let mut is_first = true;
         for part in self.limbs.iter().rev() {
             let result = {
@@ -431,6 +488,11 @@ mod tests {
     }
 
     #[test]
+    /**
+     * Test whether (&BigUInt as Mul<u32>)::mul
+     * Can calculate 100!. The expected value
+     * here is generated via Python's math.factorial.
+     */
     fn mul_factorial_matches() -> () {
         const EXPECTED: [u64; 9] = [
             0x0u64,
@@ -451,6 +513,38 @@ mod tests {
         }
 
         assert_eq!(&EXPECTED, factorial.limbs.as_slice())
+    }
+
+    #[test]
+    /**
+     * Test whether (&BigUInt as Mul<&BigUInt>)::mul
+     * Can calculate (100!)^2, checking it against
+     * (&BigUInt as Mul<u32>) by calculating the same number with
+     * small multiplicands.
+     */
+    fn mul_factorial_square() -> () {
+        // Uses (&BigUInt).mul(&BigUInt)
+        let fact_square_1 = {
+            let mut factorial = BigUInt::from(1u32);
+
+            for factor in 2u32..=50 {
+                factorial = &factorial * factor;
+            }
+            &factorial * &factorial
+        };
+
+        // Performs simpler u32 multiplication
+        let fact_square_2 = {
+            let mut factorial_sq = BigUInt::from(1u32);
+
+            for factor in 2u32..=50 {
+                factorial_sq = &factorial_sq * (factor * factor);
+            }
+
+            factorial_sq
+        };
+
+        assert_eq!(fact_square_1, fact_square_2);
     }
 
     #[test]

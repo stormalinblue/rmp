@@ -428,4 +428,36 @@ mod tests {
             a_add_eq = prev_b;
         }
     }
+
+    #[test]
+    /**
+     * Test whether (&BigInt as Mul<&BigInt>)::mul
+     * Can calculate (100!)^2, checking it against
+     * (&BigInt as Mul<u32>) by calculating the same number with
+     * small multiplicands.
+     */
+    fn mul_factorial_square() -> () {
+        // Uses (&BigUInt).mul(&BigUInt)
+        let fact_square_1 = {
+            let mut factorial = BigInt::from(1);
+
+            for factor in 2u32..=50 {
+                factorial = &factorial * factor;
+            }
+            &factorial * &factorial
+        };
+
+        // Performs simpler u32 multiplication
+        let fact_square_2 = {
+            let mut factorial_sq = BigInt::from(1);
+
+            for factor in 2u32..=50 {
+                factorial_sq = &factorial_sq * (factor * factor);
+            }
+
+            factorial_sq
+        };
+
+        assert_eq!(fact_square_1, fact_square_2);
+    }
 }
