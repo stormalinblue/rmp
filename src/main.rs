@@ -20,7 +20,7 @@ fn fibonacci(n: usize) -> BigInt {
 
 fn do_fibonacci() {
     for i in 0..3000 {
-        println!("{:?}", fibonacci(i));
+        println!("{}", fibonacci(i));
     }
 }
 
@@ -36,6 +36,6 @@ fn main() {
     }
 
     for (index, factorial) in factorials.iter().enumerate() {
-        println!("{}: {:?}", index + 1, &factorial);
+        println!("{}: {}", index + 1, &factorial);
     }
 }

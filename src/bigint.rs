@@ -1,6 +1,6 @@
 use super::biguint::BigUInt;
 use std::cmp::{Ord, Ordering};
-use std::fmt::Debug;
+use std::fmt;
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,17 @@ impl BigInt {
             sign: Sign::Negative,
             mantissa,
         })
+    }
+
+    fn is_nonnegative(&self) -> bool {
+        match self {
+            BigInt::Zero => true,
+            BigInt::Nonzero(Nonzero {
+                sign: Sign::Positive,
+                ..
+            }) => true,
+            _ => false,
+        }
     }
 }
 
@@ -305,19 +316,33 @@ impl Mul<&BigInt> for &BigInt {
     }
 }
 
-impl Debug for BigInt {
+impl fmt::LowerHex for BigInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BigInt::Zero => write!(f, "0"),
+            BigInt::Zero => f.pad_integral(true, "", "0"),
             BigInt::Nonzero(Nonzero { sign, mantissa }) => match sign {
-                Sign::Positive => {
-                    write!(f, "+{:?}", mantissa)
-                }
-                Sign::Negative => {
-                    write!(f, "-{:?}", mantissa)
-                }
+                Sign::Positive => f.pad_integral(true, "", &format!("{:x}", &mantissa)),
+                Sign::Negative => f.pad_integral(false, "", &format!("{:x}", &mantissa)),
             },
         }
+    }
+}
+
+impl fmt::Display for BigInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BigInt::Zero => f.pad_integral(true, "", "0"),
+            BigInt::Nonzero(Nonzero { sign, mantissa }) => match sign {
+                Sign::Positive => f.pad_integral(true, "", &format!("{}", &mantissa)),
+                Sign::Negative => f.pad_integral(false, "", &format!("{}", &mantissa)),
+            },
+        }
+    }
+}
+
+impl fmt::Debug for BigInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return write!(f, "{}", self);
     }
 }
 

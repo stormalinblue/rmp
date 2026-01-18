@@ -1,6 +1,7 @@
 use std::cmp::{self, Ord, Ordering};
-use std::fmt::Debug;
-use std::ops::{Add, AddAssign, Mul, ShlAssign, Sub};
+use std::fmt;
+
+use std::ops::{Add, AddAssign, Div, Mul, ShlAssign, Sub};
 
 #[derive(Clone)]
 pub struct BigUInt {
@@ -128,6 +129,68 @@ impl BigUInt {
                     + (LIMB_SIZE_BITS - (self.limbs[n - 1].leading_zeros() as u64))
             }
         }
+    }
+
+    fn lt_u32(&self, rhs: u32) -> bool {
+        if rhs == 0 {
+            return false;
+        } else if self.limbs.len() == 1 && self.limbs[0] < (rhs as u64) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    pub fn div_mod(&self, rhs: u32) -> Option<(Self, u32)> {
+        if rhs == 0 {
+            return None;
+        } else if self.lt_u32(rhs) {
+            // println!("Short circuit zero limbs: {:?}", self.limbs);
+            return Some((Self::zero(), self.limbs[0] as u32));
+        }
+
+        let divisor = rhs as u64;
+
+        let result_num_limbs = if self.limbs[self.limbs.len() - 1] < divisor {
+            self.limbs.len() - 1
+        } else {
+            self.limbs.len()
+        };
+        let mut result_limbs: Vec<u64> = Vec::with_capacity(result_num_limbs);
+        let uninit_limbs = result_limbs.spare_capacity_mut();
+
+        // println!("self: {:x}", self);
+
+        let mut residue: u64 = 0;
+        for (lshift_limbs, limb) in self.limbs.iter().enumerate().rev() {
+            let bones = limb_to_bones(*limb);
+            // println!("Bones {:?}", bones);
+
+            let upper_working_copy = (residue << 32) + bones.upper;
+            let upper_quot = upper_working_copy / divisor;
+            residue = upper_working_copy % divisor;
+            // println!("upper residue {}", residue);
+
+            let lower_working_copy = (residue << 32) + bones.lower;
+            let lower_quot = lower_working_copy / divisor;
+            residue = lower_working_copy % divisor;
+            // println!("lower residue {}", residue);
+
+            if result_num_limbs > lshift_limbs {
+                uninit_limbs[lshift_limbs].write((upper_quot << 32) + lower_quot);
+            }
+        }
+
+        unsafe {
+            result_limbs.set_len(result_num_limbs);
+        }
+
+        Some((
+            Self {
+                limbs: result_limbs,
+            },
+            residue as u32,
+        ))
     }
 }
 
@@ -283,6 +346,8 @@ impl ShlAssign<u64> for BigUInt {
         let old_num_limbs = self.limbs.len();
         let new_num_limbs = ((new_num_bits + LIMB_SIZE_BITS - 1) / LIMB_SIZE_BITS) as usize;
         self.limbs.reserve(new_num_limbs - old_num_limbs);
+        // SAFETY: Perhaps we are stepping into UB
+        // All of these bytes should be written to before we read them
         unsafe { self.limbs.set_len(new_num_limbs) };
 
         let shift_limbs = (rhs / LIMB_SIZE_BITS) as usize;
@@ -404,28 +469,95 @@ impl Mul<&BigUInt> for &BigUInt {
     }
 }
 
-impl Debug for BigUInt {
+impl Div<u32> for &BigUInt {
+    type Output = Option<BigUInt>;
+    fn div(self, rhs: u32) -> Self::Output {
+        match self.div_mod(rhs) {
+            None => None,
+            Some((result, _)) => Some(result),
+        }
+    }
+}
+
+impl fmt::LowerHex for BigUInt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_zero() {
-            write!(f, "0x0")?;
+            write!(f, "0")?;
             return Ok(());
         }
 
+        let mut string = String::with_capacity(17 * self.limbs.len());
+
         let mut is_first = true;
         for part in self.limbs.iter().rev() {
-            let result = {
-                if is_first {
-                    write!(f, "0x{:x}", part)
-                } else {
-                    write!(f, "_{:016x}", part)
-                }
-            };
-            if result.is_err() {
-                return result;
+            if is_first {
+                string += &format!("{:x}", part);
+            } else {
+                string += &format!("_{:016x}", part);
             }
             is_first = false;
         }
+        f.pad_integral(true, "", &string)?;
         Ok(())
+    }
+}
+
+impl fmt::Display for BigUInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut working_copy = self.clone();
+
+        if self.is_zero() {
+            return write!(f, "0");
+        }
+
+        // Optimization: Divide and conquer using the 2048 algorithm
+        /* Fixed point approximation of log10(2) with denominator 2 ** 32 */
+        const CHARS_PER_2_TO_POWER_32_BITS: u128 = 1292913987;
+        // TODO: Double check this math
+        let chars_required: usize = ((CHARS_PER_2_TO_POWER_32_BITS * (self.num_bits() as u128)
+            + ((1u128 << 32) - 1))
+            >> 32) as usize;
+
+        // Optimization: We don't need to initialize all these characters
+        // Optimization: Figure out a streaming solution
+        let mut characters: Vec<u8> = vec![0; chars_required];
+
+        // println!("chars_required {}", chars_required);
+
+        let mut character_index = 0;
+        while !(&working_copy.is_zero()) {
+            match working_copy.div_mod(10u32) {
+                None => unreachable!(),
+                Some((quot, rem)) => {
+                    // println!("quot {:x}, rem {}", quot, rem);
+                    working_copy = quot;
+                    characters[chars_required - character_index - 1] = ('0' as u8) + (rem as u8);
+                }
+            }
+            character_index += 1;
+        }
+
+        // assert_eq!(character_index, chars_required);
+
+        // characters.truncate(character_index);
+
+        // Optimization: We should really not need this second copy
+        let string = unsafe {
+            String::from_utf8_unchecked(characters[chars_required - character_index..].to_vec())
+        };
+        f.pad_integral(true, "", &string)?;
+
+        Ok(())
+    }
+}
+
+impl fmt::Debug for BigUInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            return f.pad_integral(true, "", &format!("{:x}", self));
+        } else {
+            return f.pad_integral(true, "", &format!("{}", self));
+        }
     }
 }
 
@@ -518,7 +650,7 @@ mod tests {
     #[test]
     /**
      * Test whether (&BigUInt as Mul<&BigUInt>)::mul
-     * Can calculate (100!)^2, checking it against
+     * can calculate (100!)^2, checking it against
      * (&BigUInt as Mul<u32>) by calculating the same number with
      * small multiplicands.
      */
