@@ -17,6 +17,10 @@ impl ShlAssign<u64> for BigUInt {
         // SAFETY: Perhaps we are stepping into UB
         // All of these bytes should be written to before we read them
         unsafe { self.limbs.set_len(new_num_limbs) };
+        if old_num_limbs < new_num_limbs {
+            self.limbs[new_num_limbs - 1] = 0;
+        }
+        // self.limbs.resize(new_num_limbs, 0);
 
         let shift_limbs = (rhs / LIMB_SIZE_BITS) as usize;
         let shift_bits = rhs % LIMB_SIZE_BITS;
