@@ -1,5 +1,5 @@
 use super::basic::{BigUInt, Bones, LIMB_SIZE_BITS, limb_to_bones, limb_to_bones_u32};
-use std::ops::Mul;
+use std::ops::{Mul, MulAssign};
 
 impl Mul<u32> for &BigUInt {
     type Output = BigUInt;
@@ -13,10 +13,10 @@ impl Mul<u32> for &BigUInt {
         let rhs_num_bits: u64 = (32 - rhs.leading_zeros()) as u64;
         let lhs_num_bits = self.num_bits();
 
-        let tot_bits = rhs_num_bits + lhs_num_bits - 1;
+        let tot_bits = rhs_num_bits + lhs_num_bits;
         let tot_limbs = ((tot_bits + LIMB_SIZE_BITS - 1) / LIMB_SIZE_BITS) as usize;
 
-        let mut new_limbs = vec![0u64; tot_limbs];
+        let mut new_limbs: Vec<u64> = Vec::with_capacity(tot_limbs);
 
         let rhs_limb = rhs as u64;
 
@@ -43,16 +43,57 @@ impl Mul<u32> for &BigUInt {
             // new_value is at most new_value_bound
             let (new_value, overflow) =
                 (lower_result + carry).overflowing_add(upper_in_current << 32);
-            new_limbs[index] = new_value;
+            new_limbs.push(new_value);
             // carry is at most 2 ** 32 - 1 + 1 = 2 ** 32
             carry = upper_in_next + (overflow as u64);
         }
 
         if carry > 0 {
-            new_limbs[self.limbs.len()] = carry;
+            new_limbs.push(carry);
         }
 
         return BigUInt { limbs: new_limbs };
+    }
+}
+
+impl MulAssign<u32> for BigUInt {
+    fn mul_assign(&mut self, rhs: u32) {
+        if rhs == 0 || self.is_zero() {
+            return;
+        }
+        let rhs_limb = rhs as u64;
+
+        // carry is at most 2 ** 32
+        let mut carry: u64 = 0;
+        for limb in self.limbs.iter_mut() {
+            let bones = limb_to_bones(*limb);
+
+            // lower_result is at most (2 ** 64) - 2 * (2 ** 32) + 1
+            let lower_result = bones.lower * rhs_limb;
+            let upper_result = bones.upper * rhs_limb;
+
+            // upper_in_current is at most 2 ** 32 - 1
+            // upper_in_next is at most 2 ** 32 - 1
+            let Bones {
+                upper: upper_in_next,
+                lower: upper_in_current,
+            } = limb_to_bones(upper_result);
+
+            // lower_result + carry is at most 2 ** 64 - 2 ** 32 + 1
+            // upper_in_current << 32 is at most 2 ** 64 - 2 ** 32
+            // their sum is at most 2 ** 64 + new_value_bound where
+            //      new_value_bound is 2 ** 64 - 2 * (2 ** 32) + 1
+            // new_value is at most new_value_bound
+            let (new_value, overflow) =
+                (lower_result + carry).overflowing_add(upper_in_current << 32);
+            *limb = new_value;
+            // carry is at most 2 ** 32 - 1 + 1 = 2 ** 32
+            carry = upper_in_next + (overflow as u64);
+        }
+
+        if carry > 0 {
+            self.limbs.push(carry);
+        }
     }
 }
 
@@ -110,6 +151,34 @@ mod tests {
 
         for factor in 2u32..=100 {
             factorial = &factorial * factor;
+        }
+
+        assert_eq!(&EXPECTED, factorial.limbs.as_slice())
+    }
+
+    #[test]
+    /**
+     * Test whether (&BigUInt as Mul<u32>)::mul
+     * Can calculate 100!. The expected value
+     * here is generated via Python's math.factorial.
+     */
+    fn mul_assign_factorial_matches() -> () {
+        const EXPECTED: [u64; 9] = [
+            0x0u64,
+            0x2735c61a00000000u64,
+            0xb3b72ed2ee8b02eau64,
+            0x45570cca9420c6ecu64,
+            0x943a321cdf103917u64,
+            0x66ef9a70eb21b5b2u64,
+            0x28d54bbda40d16e9u64,
+            0x964ec395dc240695u64,
+            0x1b30u64,
+        ];
+
+        let mut factorial = BigUInt::from(1u32);
+
+        for factor in 2u32..=100 {
+            factorial *= factor;
         }
 
         assert_eq!(&EXPECTED, factorial.limbs.as_slice())
