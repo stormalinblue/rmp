@@ -4,6 +4,10 @@ use std::ops::{Add, AddAssign, Sub};
 
 impl BigUInt {
     pub(super) fn limb_lshift_add_assign(&mut self, lshift_limbs: usize, rhs: &Self) {
+        if rhs.is_zero() {
+            return;
+        }
+
         let max_limbs = cmp::max(self.limbs.len(), rhs.limbs.len() + lshift_limbs);
         let target_capacity = max_limbs + 1;
         self.limbs.reserve(target_capacity - self.limbs.len());
@@ -140,6 +144,28 @@ impl Add<&BigUInt> for &BigUInt {
             new_limbs.push(1);
         }
         BigUInt { limbs: new_limbs }
+    }
+}
+
+impl AddAssign<u64> for BigUInt {
+    fn add_assign(&mut self, rhs: u64) {
+        if self.is_zero() {
+            self.limbs.resize(1, rhs);
+            return;
+        }
+
+        let mut carry = rhs;
+        for limb in self.limbs.iter_mut() {
+            let (new_limb, overflow) = limb.overflowing_add(carry);
+            *limb = new_limb;
+            if !overflow {
+                return;
+            } else {
+                carry = overflow as u64;
+            }
+        }
+
+        self.limbs.push(1);
     }
 }
 
