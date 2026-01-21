@@ -16,7 +16,6 @@ impl BigUInt {
         if rhs == 0 {
             return None;
         } else if self.lt_u32(rhs) {
-            // println!("Short circuit zero limbs: {:?}", self.limbs);
             return Some((Self::zero(), self.limbs[0] as u32));
         }
 
@@ -30,22 +29,17 @@ impl BigUInt {
         let mut result_limbs: Vec<u64> = Vec::with_capacity(result_num_limbs);
         let uninit_limbs = result_limbs.spare_capacity_mut();
 
-        // println!("self: {:x}", self);
-
         let mut residue: u64 = 0;
         for (lshift_limbs, limb) in self.limbs.iter().enumerate().rev() {
             let bones = limb_to_bones(*limb);
-            // println!("Bones {:?}", bones);
 
             let upper_working_copy = (residue << 32) + bones.upper;
             let upper_quot = upper_working_copy / divisor;
             residue = upper_working_copy % divisor;
-            // println!("upper residue {}", residue);
 
             let lower_working_copy = (residue << 32) + bones.lower;
             let lower_quot = lower_working_copy / divisor;
             residue = lower_working_copy % divisor;
-            // println!("lower residue {}", residue);
 
             if result_num_limbs > lshift_limbs {
                 uninit_limbs[lshift_limbs].write((upper_quot << 32) + lower_quot);
