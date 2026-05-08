@@ -20,31 +20,35 @@ impl Mul<u32> for &BigUInt {
 
         let rhs_limb = rhs as u64;
 
-        // carry is at most 2 ** 32
+        /* carry is at most 2 ** 32 */
         let mut carry: u64 = 0;
-        for (index, limb) in self.limbs.iter().enumerate() {
+        for limb in self.limbs.iter() {
             let bones = limb_to_bones(*limb);
 
-            // lower_result is at most (2 ** 64) - 2 * (2 ** 32) + 1
+            /* lower_result is at most (2 ** 64) - 2 * (2 ** 32) + 1 */
             let lower_result = bones.lower * rhs_limb;
             let upper_result = bones.upper * rhs_limb;
 
-            // upper_in_current is at most 2 ** 32 - 1
-            // upper_in_next is at most 2 ** 32 - 1
+            /*
+             * upper_in_current is at most 2 ** 32 - 1
+             * upper_in_next is at most 2 ** 32 - 1
+             */
             let Bones {
                 upper: upper_in_next,
                 lower: upper_in_current,
             } = limb_to_bones(upper_result);
 
-            // lower_result + carry is at most 2 ** 64 - 2 ** 32 + 1
-            // upper_in_current << 32 is at most 2 ** 64 - 2 ** 32
-            // their sum is at most 2 ** 64 + new_value_bound where
-            //      new_value_bound is 2 ** 64 - 2 * (2 ** 32) + 1
-            // new_value is at most new_value_bound
+            /*
+             * lower_result + carry is at most 2 ** 64 - 2 ** 32 + 1
+             * upper_in_current << 32 is at most 2 ** 64 - 2 ** 32
+             * their sum is at most 2 ** 64 + new_value_bound where
+             *      new_value_bound is 2 ** 64 - 2 * (2 ** 32) + 1
+             * new_value is at most new_value_bound
+             */
             let (new_value, overflow) =
                 (lower_result + carry).overflowing_add(upper_in_current << 32);
             new_limbs.push(new_value);
-            // carry is at most 2 ** 32 - 1 + 1 = 2 ** 32
+            /* carry is at most 2 ** 32 - 1 + 1 = 2 ** 32 */
             carry = upper_in_next + (overflow as u64);
         }
 
@@ -63,31 +67,35 @@ impl MulAssign<u32> for BigUInt {
         }
         let rhs_limb = rhs as u64;
 
-        // carry is at most 2 ** 32
+        /* carry is at most 2 ** 32 */
         let mut carry: u64 = 0;
         for limb in self.limbs.iter_mut() {
             let bones = limb_to_bones(*limb);
 
-            // lower_result is at most (2 ** 64) - 2 * (2 ** 32) + 1
+            /* lower_result is at most (2 ** 64) - 2 * (2 ** 32) + 1 */
             let lower_result = bones.lower * rhs_limb;
             let upper_result = bones.upper * rhs_limb;
 
-            // upper_in_current is at most 2 ** 32 - 1
-            // upper_in_next is at most 2 ** 32 - 1
+            /*
+             * upper_in_current is at most 2 ** 32 - 1
+             * upper_in_next is at most 2 ** 32 - 1
+             */
             let Bones {
                 upper: upper_in_next,
                 lower: upper_in_current,
             } = limb_to_bones(upper_result);
 
-            // lower_result + carry is at most 2 ** 64 - 2 ** 32 + 1
-            // upper_in_current << 32 is at most 2 ** 64 - 2 ** 32
-            // their sum is at most 2 ** 64 + new_value_bound where
-            //      new_value_bound is 2 ** 64 - 2 * (2 ** 32) + 1
-            // new_value is at most new_value_bound
+            /*
+             * lower_result + carry is at most 2 ** 64 - 2 ** 32 + 1
+             * upper_in_current << 32 is at most 2 ** 64 - 2 ** 32
+             * their sum is at most 2 ** 64 + new_value_bound where
+             *      new_value_bound is 2 ** 64 - 2 * (2 ** 32) + 1
+             * new_value is at most new_value_bound
+             */
             let (new_value, overflow) =
                 (lower_result + carry).overflowing_add(upper_in_current << 32);
             *limb = new_value;
-            // carry is at most 2 ** 32 - 1 + 1 = 2 ** 32
+            /* carry is at most 2 ** 32 - 1 + 1 = 2 ** 32 */
             carry = upper_in_next + (overflow as u64);
         }
 
