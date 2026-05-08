@@ -8,14 +8,16 @@ pub enum ConvertOutNumError {
 impl From<u32> for BigUInt {
     fn from(n: u32) -> BigUInt {
         BigUInt {
-            limbs: vec![n as u64],
+            limbs: if n > 0 { vec![n as u64] } else { vec![] },
         }
     }
 }
 
 impl From<u64> for BigUInt {
     fn from(n: u64) -> BigUInt {
-        BigUInt { limbs: vec![n] }
+        BigUInt {
+            limbs: if n > 0 { vec![n] } else { vec![] },
+        }
     }
 }
 
